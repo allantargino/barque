@@ -14,6 +14,8 @@ SAMPLE=true
 SERVICE_CONNECTION_NAME=default-gitops-service-connection
 MANIFEST_LIVE=manifest-live
 CUSTOM_SETUP_FILE=default
+BOOTSTRAP_CLUSTER_NAME=bootstrap
+INFRASTRUCTURE_PROVIDER=azure
 
 while [[ "$1" =~ ^- && ! "$1" == "--" ]]; do case $1 in
   --org )
@@ -43,6 +45,15 @@ while [[ "$1" =~ ^- && ! "$1" == "--" ]]; do case $1 in
   --custom-pipeline-setup ) 
     shift; CUSTOM_SETUP_FILE=$1
     ;;
+  -b | --bootstrap-cluster-name )
+    shift; BOOTSTRAP_CLUSTER_NAME=$1
+    ;;
+  -i | --infrastructure-provider )
+    shift; INFRASTRUCTURE_PROVIDER=$1
+    ;;
+  -y | --yes )
+    PROCEED="y"
+    ;;
 esac; shift; done
 
 if [[ "$1" == '--' ]]; then shift; fi
@@ -67,13 +78,21 @@ echo -e ""
 echo -e "\t \x1B[32mInfra Strategy (use -t to override): \x1B[36mcomming soon\x1B[0m (options: cluster-api-azure, terraform)"
 echo -e "\t \x1B[32mRepository for App initialization (use -a to override): \x1B[36m$INITIALIZATION_APP_REPO"
 echo -e "\t \x1B[32mArc Enabled: \x1B[36mfalse (comming soon)"
-echo -ne "Proceed? [y/n]:\x1B[0m "
-read proceed
-if [[ "$proceed" != "y" ]]; then
-  exit
+
+if [[ -z "$PROCEED" ]]; then
+  echo -ne "Proceed? [y/n]:\x1B[0m "
+  read proceed
+  if [[ "$proceed" != "y" ]]; then
+    exit
+  fi
 fi
 
 ensure_dependencies
+
+create_bootstrap_cluster $BOOTSTRAP_CLUSTER_NAME $INFRASTRUCTURE_PROVIDER
+create_management_cluster $BOOTSTRAP_CLUSTER_NAME $INFRASTRUCTURE_PROVIDER
+
+exit 0
 
 # 1. Create Repositories
 echo "Creating Azure devops Projects and Repositories..."   

@@ -1,5 +1,9 @@
 function ensure_dependencies(){
   az extension add --name azure-devops
+  # TODO: kubectl
+  # TODO: docker
+  # TODO: kind
+  # TODO: clusterctl
 }
 
 function create_repo() {
@@ -221,4 +225,58 @@ function set_build_agent_permission() {
   az devops security permission update --detect false --organization https://dev.azure.com/$org --namespace-id 2e9eb7ed-3c0a-47d4-87c1-0ffdd275fd87 --subject $buildagentdescriptor --token "repoV2/$projectid/$repoid" --allow-bit 16384
   # permission for create branch 16
   az devops security permission update --detect false --organization https://dev.azure.com/$org --namespace-id 2e9eb7ed-3c0a-47d4-87c1-0ffdd275fd87 --subject $buildagentdescriptor --token "repoV2/$projectid/$repoid" --allow-bit 16
+}
+
+function create_bootstrap_cluster(){
+  local bootstrapClusterName=$1
+  local infrastructureProvider=$2
+
+  if kind get clusters | grep -w $bootstrapClusterName; then
+    kind get kubeconfig --name $bootstrapClusterName > $bootstrapClusterName.kubeconfig
+  else
+    kind create cluster --name $bootstrapClusterName --kubeconfig $bootstrapClusterName.kubeconfig --wait 30s
+  fi
+
+  if ! kubectl get providers --all-namespaces --kubeconfig=./$bootstrapClusterName.kubeconfig | grep infrastructure-$infrastructureProvider; then
+    clusterctl init --infrastructure $infrastructureProvider --kubeconfig $bootstrapClusterName.kubeconfig
+  fi
+}
+
+function create_workload_cluster(){
+  local managementClusterName=$1
+  local workloadClusterName=$2
+  local infrastructureProvider=$3
+
+  echo Creating workload cluster...
+
+  # TODO: Should we keep at least --kubernetes-version, --control-plane-machine-count and --worker-machine-count?
+  clusterctl config cluster $workloadClusterName --infrastructure $infrastructureProvider --kubeconfig=./$managementClusterName.kubeconfig \
+    --kubernetes-version v1.17.3 --control-plane-machine-count=1 --worker-machine-count=1 > $managementClusterName.yaml
+    # | kubectl apply --kubeconfig=./$managementClusterName.kubeconfig -f -
+  
+  kubectl apply --kubeconfig=./$managementClusterName.kubeconfig -f $managementClusterName.yaml
+  
+  # TODO: wait workload cluster to be ready
+  
+  echo Getting kubeconfig...
+
+  kubectl get secret/$workloadClusterName-kubeconfig --namespace=default --kubeconfig=./$managementClusterName.kubeconfig -o jsonpath={.data.value} \
+    | base64 --decode \
+    > ./$workloadClusterName.kubeconfig
+
+  kubectl --kubeconfig=./$workloadClusterName.kubeconfig \
+    apply -f https://raw.githubusercontent.com/kubernetes-sigs/cluster-api-provider-azure/master/templates/addons/calico.yaml
+}
+
+# It is a common practice to create a temporary, local bootstrap cluster which is then used to provision
+# a target management cluster on the selected infrastructure provider.
+function create_management_cluster(){
+  local bootstrapClusterName=$1
+  local infrastructureProvider=$2
+
+  MANAGEMENT_CLUSTER_NAME="management-cluster"
+
+  create_workload_cluster $bootstrapClusterName $MANAGEMENT_CLUSTER_NAME $infrastructureProvider
+
+  clusterctl init --infrastructure $infrastructureProvider --kubeconfig $MANAGEMENT_CLUSTER_NAME.kubeconfig
 }
