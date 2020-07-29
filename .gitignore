@@ -143,3 +143,4 @@ cython_debug/
 mktemp
 
 *.kubeconfig
+*.temp.yaml

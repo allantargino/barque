@@ -234,12 +234,14 @@ function create_bootstrap_cluster(){
   if kind get clusters | grep -w $bootstrapClusterName; then
     kind get kubeconfig --name $bootstrapClusterName > $bootstrapClusterName.kubeconfig
   else
-    kind create cluster --name $bootstrapClusterName --kubeconfig $bootstrapClusterName.kubeconfig --wait 30s
+    kind create cluster --name $bootstrapClusterName --kubeconfig $bootstrapClusterName.kubeconfig --wait 60s
   fi
 
   if ! kubectl get providers --all-namespaces --kubeconfig=./$bootstrapClusterName.kubeconfig | grep infrastructure-$infrastructureProvider; then
     clusterctl init --infrastructure $infrastructureProvider --kubeconfig $bootstrapClusterName.kubeconfig
+    kubectl wait --for=condition=Ready pods --all --all-namespaces --kubeconfig $bootstrapClusterName.kubeconfig --timeout=2m
   fi
+
 }
 
 function create_workload_cluster(){
@@ -247,17 +249,18 @@ function create_workload_cluster(){
   local workloadClusterName=$2
   local infrastructureProvider=$3
 
-  echo Creating workload cluster...
 
-  if ! kubectl get cluster $workloadClusterName -o yaml --kubeconfig=./$managementClusterName.kubeconfig; then
+  if ! kubectl get cluster $workloadClusterName --kubeconfig=./$managementClusterName.kubeconfig; then
+    echo Creating workload cluster...
+
     clusterctl config cluster $workloadClusterName --infrastructure $infrastructureProvider --kubeconfig=./$managementClusterName.kubeconfig \
-      --kubernetes-version v1.17.3 --control-plane-machine-count=1 --worker-machine-count=1 > $managementClusterName.yaml
-      # | kubectl apply --kubeconfig=./$managementClusterName.kubeconfig -f -
-    kubectl apply --kubeconfig=./$managementClusterName.kubeconfig -f $managementClusterName.yaml
+      --kubernetes-version v1.17.3 --control-plane-machine-count=1 --worker-machine-count=1 > $workloadClusterName.temp.yaml
     
-    # TODO: wait workload cluster to be ready - cluster.status.controlPlaneReady: true?
-    # kubectl --kubeconfig bootstrap.kubeconfig get cluster management-cluster -o yaml
+    kubectl apply --kubeconfig=./$managementClusterName.kubeconfig -f $workloadClusterName.temp.yaml    
   fi
+  
+  echo "Waiting for $workloadClusterName control plane to be ready..."
+  kubectl wait --kubeconfig=./$managementClusterName.kubeconfig --for=condition=Ready cluster/management-cluster --timeout=15m
   
   kubectl get secret/$workloadClusterName-kubeconfig --namespace=default --kubeconfig=./$managementClusterName.kubeconfig -o jsonpath={.data.value} \
     | base64 --decode \
@@ -266,11 +269,11 @@ function create_workload_cluster(){
   if [[ $infrastructureProvider == "azure" ]] && ! kubectl get crds --kubeconfig management-cluster.kubeconfig | grep projectcalico.org; then
     kubectl --kubeconfig=./$workloadClusterName.kubeconfig \
       apply -f https://raw.githubusercontent.com/kubernetes-sigs/cluster-api-provider-azure/master/templates/addons/calico.yaml
+    
+    kubectl wait --for=condition=Ready pods --all --all-namespaces --kubeconfig $workloadClusterName.kubeconfig --timeout=2m
   fi
 }
 
-# It is a common practice to create a temporary, local bootstrap cluster which is then used to provision
-# a target management cluster on the selected infrastructure provider.
 function create_management_cluster(){
   local bootstrapClusterName=$1
   local infrastructureProvider=$2
@@ -282,7 +285,7 @@ function create_management_cluster(){
   if ! kubectl get providers --all-namespaces --kubeconfig=./$MANAGEMENT_CLUSTER_NAME.kubeconfig | grep infrastructure-$infrastructureProvider; then
     echo Installing Cluster API...
     clusterctl init --infrastructure $infrastructureProvider --kubeconfig $MANAGEMENT_CLUSTER_NAME.kubeconfig
+
+    kubectl wait --for=condition=Ready pods --all --all-namespaces --kubeconfig $MANAGEMENT_CLUSTER_NAME.kubeconfig --timeout=60s
   fi
 }
-
-# rm -r cache/ http-cache/

@@ -89,6 +89,8 @@ fi
 
 ensure_dependencies
 
+# It is a common practice to create a temporary, local bootstrap cluster which is then used to provision
+# a target management cluster on the selected infrastructure provider.
 create_bootstrap_cluster $BOOTSTRAP_CLUSTER_NAME $INFRASTRUCTURE_PROVIDER
 create_management_cluster $BOOTSTRAP_CLUSTER_NAME $INFRASTRUCTURE_PROVIDER
 
