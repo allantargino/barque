@@ -249,23 +249,24 @@ function create_workload_cluster(){
 
   echo Creating workload cluster...
 
-  # TODO: Should we keep at least --kubernetes-version, --control-plane-machine-count and --worker-machine-count?
-  clusterctl config cluster $workloadClusterName --infrastructure $infrastructureProvider --kubeconfig=./$managementClusterName.kubeconfig \
-    --kubernetes-version v1.17.3 --control-plane-machine-count=1 --worker-machine-count=1 > $managementClusterName.yaml
-    # | kubectl apply --kubeconfig=./$managementClusterName.kubeconfig -f -
+  if ! kubectl get cluster $workloadClusterName -o yaml --kubeconfig=./$managementClusterName.kubeconfig; then
+    clusterctl config cluster $workloadClusterName --infrastructure $infrastructureProvider --kubeconfig=./$managementClusterName.kubeconfig \
+      --kubernetes-version v1.17.3 --control-plane-machine-count=1 --worker-machine-count=1 > $managementClusterName.yaml
+      # | kubectl apply --kubeconfig=./$managementClusterName.kubeconfig -f -
+    kubectl apply --kubeconfig=./$managementClusterName.kubeconfig -f $managementClusterName.yaml
+    
+    # TODO: wait workload cluster to be ready - cluster.status.controlPlaneReady: true?
+    # kubectl --kubeconfig bootstrap.kubeconfig get cluster management-cluster -o yaml
+  fi
   
-  kubectl apply --kubeconfig=./$managementClusterName.kubeconfig -f $managementClusterName.yaml
-  
-  # TODO: wait workload cluster to be ready
-  
-  echo Getting kubeconfig...
-
   kubectl get secret/$workloadClusterName-kubeconfig --namespace=default --kubeconfig=./$managementClusterName.kubeconfig -o jsonpath={.data.value} \
     | base64 --decode \
     > ./$workloadClusterName.kubeconfig
 
-  kubectl --kubeconfig=./$workloadClusterName.kubeconfig \
-    apply -f https://raw.githubusercontent.com/kubernetes-sigs/cluster-api-provider-azure/master/templates/addons/calico.yaml
+  if [[ $infrastructureProvider == "azure" ]] && ! kubectl get crds --kubeconfig management-cluster.kubeconfig | grep projectcalico.org; then
+    kubectl --kubeconfig=./$workloadClusterName.kubeconfig \
+      apply -f https://raw.githubusercontent.com/kubernetes-sigs/cluster-api-provider-azure/master/templates/addons/calico.yaml
+  fi
 }
 
 # It is a common practice to create a temporary, local bootstrap cluster which is then used to provision
@@ -278,5 +279,10 @@ function create_management_cluster(){
 
   create_workload_cluster $bootstrapClusterName $MANAGEMENT_CLUSTER_NAME $infrastructureProvider
 
-  clusterctl init --infrastructure $infrastructureProvider --kubeconfig $MANAGEMENT_CLUSTER_NAME.kubeconfig
+  if ! kubectl get providers --all-namespaces --kubeconfig=./$MANAGEMENT_CLUSTER_NAME.kubeconfig | grep infrastructure-$infrastructureProvider; then
+    echo Installing Cluster API...
+    clusterctl init --infrastructure $infrastructureProvider --kubeconfig $MANAGEMENT_CLUSTER_NAME.kubeconfig
+  fi
 }
+
+# rm -r cache/ http-cache/
