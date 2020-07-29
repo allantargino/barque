@@ -272,6 +272,7 @@ function create_workload_cluster(){
     
     kubectl wait --for=condition=Ready pods --all --all-namespaces --kubeconfig $workloadClusterName.kubeconfig --timeout=2m
   fi
+  # TODO: Install Calico/CNI solution on other providers
 }
 
 function create_management_cluster(){
